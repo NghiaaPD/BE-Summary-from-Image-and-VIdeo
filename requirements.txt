@@ -8,3 +8,11 @@ coverage
 awscli
 flake8
 python-dotenv>=0.5.1
+
+fastapi~=0.110.3
+setuptools~=69.0.0
+torch~=2.2.1
+typing~=3.7.4.3
+einops~=0.8.0
+timm~=1.0.9
+transformers~=4.41.1
