@@ -19,8 +19,8 @@ images_dir = "./images"
 
 @app.post("/test_data")
 async def generate_content(
-    task_prompt: str = Form(...), 
-    text_input: str = Form(...),    
+    task_prompt: str = Form(...),
+    text_input: str = Form(...),
     image: UploadFile = File(...)
 ):
     try:
