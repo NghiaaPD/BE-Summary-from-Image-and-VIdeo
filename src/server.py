@@ -17,52 +17,39 @@ async def root():
     
 images_dir = "./images"
 
-@app.post("/test_data")
-async def generate_content(
-    task_prompt: str = Form(...), 
-    text_input: str = Form(...),    
-    image: UploadFile = File(...)
-):
-    try:
-        # Đường dẫn lưu file
-        file_location = os.path.join(images_dir, image.filename)
+@app.post("/file/upload_image")
+async def upload_image(file: UploadFile = File(...),
+                       task_prompt: str = "<MORE_DETAILED_CAPTION>",
+                       ):
 
-        # Lưu file lên server
-        with open(file_location, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
+    # Kiểm tra file có hợp lệ
+    tail = file.filename.split('.')[-1]
+    if tail not in ['jpg', 'jpeg', 'png']:
+        return JSONResponse(status_code=400, content={"message": "Invalid file type! The valid file will have extension: jpg, jpeg, png"})
 
-        # Đọc kích thước của ảnh
-        with Image.open(file_location) as img:
-            image_size = img.size  # (width, height)
+    file_location = os.path.join(images_dir, file.filename)
 
-        # Tạo prompt
-        if text_input is None:
-            prompt = task_prompt
-        else:
-            prompt = task_prompt + text_input
+    # Lưu file lên server
+    with open(file_location, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
-        # Giả sử bạn đã định nghĩa processor và model
-        inputs = processor(text=prompt, images=img, return_tensors="pt").to("cuda:0")
+    # Load lại hình ảnh 
+    image = Image.open(file_location)
 
-        generated_ids = model.generate(
-            input_ids=inputs["input_ids"].cuda(),
-            pixel_values=inputs["pixel_values"].cuda(),
-            max_new_tokens=1500,
-            early_stopping=False,
-            do_sample=False,
-            num_beams=3,
-        )
+    # Generate content   
+    if image.mode != "RGB":
+        image = image.convert("RGB")
 
-        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    inputs = processor(text=task_prompt, images=image, return_tensors="pt").to("cuda:0")
+    generated_ids = model.generate(
+        input_ids=inputs["input_ids"],
+        pixel_values=inputs["pixel_values"],
+        max_new_tokens=1024,
+        num_beams=3
+    )
+    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    parsed_answer = processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
+    
+    return {"filename": file.filename,
+            "content": parsed_answer}
 
-        # Giả sử bạn đã định nghĩa processor với method post_process_generation
-        parsed_answer = processor.post_process_generation(
-            generated_text,
-            task=task_prompt,
-            image_size=image_size
-        )
-
-        return {"message": parsed_answer}
-
-    except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
