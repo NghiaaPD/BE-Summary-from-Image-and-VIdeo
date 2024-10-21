@@ -17,6 +17,7 @@ async def root():
     
 images_dir = "./images"
 
+
 @app.post("/file/upload_image")
 async def upload_image(file: UploadFile = File(...),
                        task_prompt: str = "<MORE_DETAILED_CAPTION>",
@@ -52,6 +53,56 @@ async def upload_image(file: UploadFile = File(...),
     
     return {"filename": file.filename,
             "content": parsed_answer}
+
+@app.post("/test_data")
+async def generate_content(
+    task_prompt: str = Form(...),
+    text_input: str = Form(...),
+    image: UploadFile = File(...)
+):
+    try:
+        # Đường dẫn lưu file
+        file_location = os.path.join(images_dir, image.filename)
+
+        # Lưu file lên server
+        with open(file_location, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+        # Đọc kích thước của ảnh
+        with Image.open(file_location) as img:
+            image_size = img.size  # (width, height)
+
+        # Tạo prompt
+        if text_input is None:
+            prompt = task_prompt
+        else:
+            prompt = task_prompt + text_input
+
+        # Giả sử bạn đã định nghĩa processor và model
+        inputs = processor(text=prompt, images=img, return_tensors="pt").to("cuda:0")
+
+        generated_ids = model.generate(
+            input_ids=inputs["input_ids"].cuda(),
+            pixel_values=inputs["pixel_values"].cuda(),
+            max_new_tokens=1500,
+            early_stopping=False,
+            do_sample=False,
+            num_beams=3,
+        )
+
+        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+
+        # Giả sử bạn đã định nghĩa processor với method post_process_generation
+        parsed_answer = processor.post_process_generation(
+            generated_text,
+            task=task_prompt,
+            image_size=image_size
+        )
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"message": f"Error: {e}"})
+
+    return {"message": parsed_answer}
+
 
 @app.post("/file/upload_video")
 async def upload_video(file: UploadFile = File(...),):
