@@ -17,6 +17,43 @@ async def root():
     
 images_dir = "./images"
 
+
+@app.post("/file/upload_image")
+async def upload_image(file: UploadFile = File(...),
+                       task_prompt: str = "<MORE_DETAILED_CAPTION>",
+                       ):
+
+    # Kiểm tra file có hợp lệ
+    tail = file.filename.split('.')[-1]
+    if tail not in ['jpg', 'jpeg', 'png']:
+        return JSONResponse(status_code=400, content={"message": "Invalid file type! The valid file will have extension: jpg, jpeg, png"})
+
+    file_location = os.path.join(images_dir, file.filename)
+
+    # Lưu file lên server
+    with open(file_location, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Load lại hình ảnh 
+    image = Image.open(file_location)
+
+    # Generate content   
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+
+    inputs = processor(text=task_prompt, images=image, return_tensors="pt").to("cuda:0")
+    generated_ids = model.generate(
+        input_ids=inputs["input_ids"],
+        pixel_values=inputs["pixel_values"],
+        max_new_tokens=1024,
+        num_beams=3
+    )
+    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    parsed_answer = processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
+    
+    return {"filename": file.filename,
+            "content": parsed_answer}
+
 @app.post("/test_data")
 async def generate_content(
     task_prompt: str = Form(...),
@@ -64,5 +101,4 @@ async def generate_content(
 
         return {"message": parsed_answer}
 
-    except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+
