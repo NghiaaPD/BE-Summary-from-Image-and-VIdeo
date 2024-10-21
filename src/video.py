@@ -4,11 +4,13 @@ from PIL import Image
 from transformers import AutoProcessor, AutoModelForCausalLM, AutoTokenizer, AutoModelForSeq2SeqLM
 import torchvision.transforms as transforms
 import os
+from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
 
 
 # Load model
-# florence_model = AutoModelForCausalLM.from_pretrained('microsoft/Florence-2-base-ft', trust_remote_code=True).eval().cuda()
-# florence_processor = AutoProcessor.from_pretrained('microsoft/Florence-2-base-ft', trust_remote_code=True)
+florence_model = AutoModelForCausalLM.from_pretrained('microsoft/Florence-2-base-ft', trust_remote_code=True).eval().cuda()
+florence_processor = AutoProcessor.from_pretrained('microsoft/Florence-2-base-ft', trust_remote_code=True)
 # bart_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large-cnn")
 # bart_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/bart-large-cnn")
 
@@ -39,27 +41,58 @@ def extract_frames(video_path, frame_interval=10):
 
 
 # Mô tả từng khung hình bằng model Florence-2
-def describe_frames(frames, florence_processor, florence_model):
-    task_prompt = "<MORE_DETAILED_CAPTION>"
-    frame_descriptions = []
-    for frame in frames:
-        image = Image.open(os.path.join('frames', frame))
+# def describe_frames(frames, florence_processor, florence_model):
+#     task_prompt = "<MORE_DETAILED_CAPTION>"
+#     frame_descriptions = []
+#     for frame in frames:
+#         image = Image.open(os.path.join('frames', frame))
 
-        # Generate content   
-        if image.mode != "RGB":
-            image = image.convert("RGB")
+#         # Generate content   
+#         if image.mode != "RGB":
+#             image = image.convert("RGB")
 
-        inputs = florence_processor(text=task_prompt, images=image, return_tensors="pt").to("cuda:0")
-        generated_ids = florence_model.generate(
-            input_ids=inputs["input_ids"],
-            pixel_values=inputs["pixel_values"],
-            max_new_tokens=1024,
-            num_beams=3
-        )
-        generated_text = florence_processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
-        parsed_answer = florence_processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
-        frame_descriptions.append(parsed_answer)
+#         inputs = florence_processor(text=task_prompt, images=image, return_tensors="pt").to("cuda:0")
+#         generated_ids = florence_model.generate(
+#             input_ids=inputs["input_ids"],
+#             pixel_values=inputs["pixel_values"],
+#             max_new_tokens=1024,
+#             num_beams=3
+#         )
+#         generated_text = florence_processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+#         parsed_answer = florence_processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
+#         frame_descriptions.append(parsed_answer)
     
+#     return frame_descriptions
+def describe_frame_worker(frame, task_prompt="<MORE_DETAILED_CAPTION>"):
+    # Load and process image
+    image = Image.open(os.path.join('frames', frame))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    
+    inputs = florence_processor(text=task_prompt, images=image, return_tensors="pt").to("cuda:0")
+    generated_ids = florence_model.generate(
+        input_ids=inputs["input_ids"],
+        pixel_values=inputs["pixel_values"],
+        max_new_tokens=1024,
+        num_beams=3
+    )
+    generated_text = florence_processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    parsed_answer = florence_processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
+    
+    return parsed_answer
+
+# Hàm thực hiện đa luồng xử lý nhiều frame
+def describe_frames_threaded(frames):
+    with ThreadPoolExecutor(max_workers=3) as executor:  # Tùy chỉnh số lượng luồng
+        future_to_frame = {executor.submit(describe_frame_worker, frame): frame for frame in frames}
+        frame_descriptions = []
+
+        for future in concurrent.futures.as_completed(future_to_frame):
+            try:
+                frame_descriptions.append(future.result())
+            except Exception as e:
+                print(f"Error processing frame: {e}")
+
     return frame_descriptions
 
 
@@ -87,7 +120,8 @@ def summarize_video_content(video_path, frame_rate=1, florence_processor=None, f
     
     extract_frames(video_path, frame_rate)
     frames = os.listdir('frames')
-    descriptions = describe_frames(frames, florence_processor, florence_model)
+    # descriptions = describe_frames(frames, florence_processor, florence_model)
+    descriptions = describe_frames_threaded(frames)
     summary = summarize_descriptions(descriptions, bart_model, bart_tokenizer)
     return summary
 
