@@ -1,13 +1,16 @@
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import JSONResponse, FileResponse
 import shutil
-from transformers import AutoProcessor, AutoModelForCausalLM
+from transformers import AutoProcessor, AutoModelForCausalLM, AutoTokenizer, AutoModelForSeq2SeqLM
 import os
+from video import summarize_video_content
 from PIL import Image
 
-model_id = 'microsoft/Florence-2-base-ft'
-model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True).eval().cuda()
-processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+# Load model
+florence_model = AutoModelForCausalLM.from_pretrained('microsoft/Florence-2-base-ft', trust_remote_code=True).eval().cuda()
+florence_processor = AutoProcessor.from_pretrained('microsoft/Florence-2-base-ft', trust_remote_code=True)
+bart_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large-cnn")
+bart_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/bart-large-cnn")
 
 app = FastAPI()
 
@@ -41,15 +44,15 @@ async def upload_image(file: UploadFile = File(...),
     if image.mode != "RGB":
         image = image.convert("RGB")
 
-    inputs = processor(text=task_prompt, images=image, return_tensors="pt").to("cuda:0")
-    generated_ids = model.generate(
+    inputs = florence_processor(text=task_prompt, images=image, return_tensors="pt").to("cuda:0")
+    generated_ids = florence_model.generate(
         input_ids=inputs["input_ids"],
         pixel_values=inputs["pixel_values"],
         max_new_tokens=1024,
         num_beams=3
     )
-    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
-    parsed_answer = processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
+    generated_text = florence_processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    parsed_answer = florence_processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
     
     return {"filename": file.filename,
             "content": parsed_answer}
@@ -79,9 +82,9 @@ async def generate_content(
             prompt = task_prompt + text_input
 
         # Giả sử bạn đã định nghĩa processor và model
-        inputs = processor(text=prompt, images=img, return_tensors="pt").to("cuda:0")
+        inputs = florence_processor(text=prompt, images=img, return_tensors="pt").to("cuda:0")
 
-        generated_ids = model.generate(
+        generated_ids = florence_model.generate(
             input_ids=inputs["input_ids"].cuda(),
             pixel_values=inputs["pixel_values"].cuda(),
             max_new_tokens=1500,
@@ -90,10 +93,10 @@ async def generate_content(
             num_beams=3,
         )
 
-        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+        generated_text = florence_processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
 
         # Giả sử bạn đã định nghĩa processor với method post_process_generation
-        parsed_answer = processor.post_process_generation(
+        parsed_answer = florence_processor.post_process_generation(
             generated_text,
             task=task_prompt,
             image_size=image_size
@@ -117,4 +120,14 @@ async def upload_video(file: UploadFile = File(...),):
     with open(file_location, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    return {"filename": file.filename}
+    
+    summary = summarize_video_content(file_location, 
+                                      frame_rate=10, 
+                                      florence_processor=florence_processor, 
+                                      florence_model=florence_model, 
+                                      bart_model=bart_model, 
+                                      bart_tokenizer=bart_tokenizer)
+
+
+    return {"filename": file.filename,
+            "content": summary}
