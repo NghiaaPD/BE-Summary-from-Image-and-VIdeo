@@ -98,7 +98,23 @@ async def generate_content(
             task=task_prompt,
             image_size=image_size
         )
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"message": f"Error: {e}"})
 
-        return {"message": parsed_answer}
+    return {"message": parsed_answer}
 
 
+@app.post("/file/upload_video")
+async def upload_video(file: UploadFile = File(...),):
+    
+    tail = file.filename.split('.')[-1]
+    if tail not in ['mp4',]:
+        return JSONResponse(status_code=400, content={"message": "Invalid file type! The valid file will have extension: mp4"})
+    
+    file_location = os.path.join(images_dir, file.filename)
+
+    # Lưu file lên server
+    with open(file_location, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return {"filename": file.filename}
